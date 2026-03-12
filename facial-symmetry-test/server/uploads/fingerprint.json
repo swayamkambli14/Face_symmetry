@@ -1,0 +1,20 @@
+{
+  "scores": {
+    "zones": {
+      "forehead": 80.16,
+      "eyes": 79.33,
+      "nose": 92.46,
+      "mouth": 93.49,
+      "jaw": 87.11
+    },
+    "aggregate": 86.09
+  },
+  "meta": {
+    "image_path": "C:\\Users\\Swayam\\Desktop\\Symmetry\\facial-symmetry-test\\server\\uploads\\baseline_1773339978152.jpg",
+    "lighting_ratio": 0.992,
+    "lighting_ok": true,
+    "pose_valid": true,
+    "yaw_ratio": 1.123,
+    "confidence": 0.0
+  }
+}

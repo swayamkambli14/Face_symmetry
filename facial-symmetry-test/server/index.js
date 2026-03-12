@@ -3,17 +3,19 @@ const multer = require("multer");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
-const { spawn } = require("child_process");
+const fetch = require("node-fetch");
+const FormData = require("form-data");
 
 const app = express();
-const PORT =  process.env.PORT || 5000 ;
+const PORT = process.env.PORT || 5000;
+const CV_ENGINE_URL = process.env.CV_ENGINE_URL || "http://localhost:8000";
+const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
 
-app.use(cors());
+app.use(cors({ origin: CLIENT_URL }));
 app.use(express.json());
 
 // ── Storage ──────────────────────────────────────────────────────────────────
 const UPLOADS_DIR = path.join(__dirname, "uploads");
-const CV_ENGINE_DIR = path.join(__dirname, "..", "cv_engine");
 
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -35,32 +37,28 @@ const upload = multer({
   },
 });
 
-// ── Python Spawner ────────────────────────────────────────────────────────────
-function runPython(args) {
-  return new Promise((resolve, reject) => {
-    const PYTHON_BIN = process.env.PYTHON_BIN || "python";
-    const py = spawn(PYTHON_BIN, [path.join(CV_ENGINE_DIR, "analyze.py"), ...args], {
-      cwd: CV_ENGINE_DIR,
-    });
+// ── CV Engine HTTP Client ──────────────────────────────────────────────────────
+async function callCVEngine(imagePath, mode, fingerprintPath = null) {
+  const formData = new FormData();
+  formData.append("mode", mode);
+  formData.append("image", fs.createReadStream(imagePath));
 
-    let stdout = "";
-    let stderr = "";
+  if (fingerprintPath && fs.existsSync(fingerprintPath)) {
+    formData.append("fingerprint", fs.createReadStream(fingerprintPath));
+  }
 
-    py.stdout.on("data", (d) => (stdout += d.toString()));
-    py.stderr.on("data", (d) => (stderr += d.toString()));
-
-    py.on("close", (code) => {
-      if (!stdout.trim()) {
-        return reject(new Error(`Python error (code ${code}): ${stderr}`));
-      }
-      try {
-        const result = JSON.parse(stdout.trim());
-        resolve(result);
-      } catch (e) {
-        reject(new Error(`JSON parse failed. stdout: ${stdout} stderr: ${stderr}`));
-      }
-    });
+  const response = await fetch(`${CV_ENGINE_URL}/analyze`, {
+    method: "POST",
+    body: formData,
+    headers: formData.getHeaders(),
   });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`CV Engine error: ${response.status} - ${errorText}`);
+  }
+
+  return await response.json();
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -73,15 +71,14 @@ app.post("/api/baseline", upload.single("image"), async (req, res) => {
   const fingerprintPath = path.join(UPLOADS_DIR, "fingerprint.json");
 
   try {
-    const result = await runPython([
-      "--mode", "baseline",
-      "--image", imagePath,
-      "--out", fingerprintPath,
-    ]);
+    const result = await callCVEngine(imagePath, "baseline");
 
     if (result.error) {
       return res.status(422).json({ error: result.error });
     }
+
+    // Save fingerprint locally
+    fs.writeFileSync(fingerprintPath, JSON.stringify(result, null, 2));
 
     res.json({
       success: true,
@@ -108,11 +105,7 @@ app.post("/api/analyze", upload.single("image"), async (req, res) => {
   const testImagePath = req.file.path;
 
   try {
-    const result = await runPython([
-      "--mode", "analyze",
-      "--image", testImagePath,
-      "--fingerprint", fingerprintPath,
-    ]);
+    const result = await callCVEngine(testImagePath, "analyze", fingerprintPath);
 
     if (result.error) {
       return res.status(422).json({ error: result.error });
@@ -133,13 +126,11 @@ app.get("/api/status", (req, res) => {
   if (hasBaseline) {
     try {
       const fp = JSON.parse(fs.readFileSync(fingerprintPath, "utf8"));
-      // scores is flat: {forehead: 88.4, eyes: 82.1, ...}
-      // filter out any non-number values before sending
       const raw = fp.scores || {};
       baselineScores = Object.fromEntries(
         Object.entries(raw).filter(([k, v]) => typeof v === "number")
       );
-    } catch (e) {}
+    } catch (e) { }
   }
   res.json({ hasBaseline, baselineScores });
 });
@@ -157,6 +148,7 @@ app.delete("/api/reset", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`\n🚀 Facial Symmetry API running on http://localhost:${PORT}`);
-  console.log(`   CV Engine: ${CV_ENGINE_DIR}`);
-  console.log(`   Uploads:   ${UPLOADS_DIR}\n`);
+  console.log(`   CV Engine URL: ${CV_ENGINE_URL}`);
+  console.log(`   Client URL: ${CLIENT_URL}`);
+  console.log(`   Uploads: ${UPLOADS_DIR}\n`);
 });
