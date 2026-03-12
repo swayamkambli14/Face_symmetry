@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
-const API = "http://localhost:5000/api";
+const API = (import.meta.env.VITE_API_URL || "http://localhost:5000") + "/api";
 const OVAL = { cx: 0.5, cy: 0.48, rx: 0.22, ry: 0.35 };
 
 function inOval(x, y) {
@@ -83,8 +83,8 @@ export default function App() {
     const overlayRef = useRef(null);
     const streamRef = useRef(null);
     const fmRef = useRef(null);
-    const rafRef = useRef(null);      // rAF for overlay drawing
-    const fmTimerRef = useRef(null);      // setInterval for FaceMesh (separate from rAF)
+    const rafRef = useRef(null);
+    const fmTimerRef = useRef(null);
     const aliveRef = useRef(false);
     const condRef = useRef(COND0);
     const labelRef = useRef("");
@@ -106,7 +106,7 @@ export default function App() {
         return () => { try { document.head.removeChild(sc); } catch (_) { } };
     }, []);
 
-    // ── Draw oval overlay only (video renders itself) ─────────────────────
+    // ── Draw oval overlay only ─────────────────────────────────────────────
     const drawOverlay = useCallback(() => {
         const canvas = overlayRef.current;
         const video = videoRef.current;
@@ -153,7 +153,6 @@ export default function App() {
         const yr = Math.abs(rE.x - nose.x) > 0 ? Math.abs(nose.x - lE.x) / Math.abs(rE.x - nose.x) : 1;
         const pose = yr >= 0.75 && yr <= 1.33;
 
-        // lighting via temporary canvas (does NOT touch overlay)
         let light = true;
         try {
             const vid = videoRef.current;
@@ -189,7 +188,7 @@ export default function App() {
         setCond(COND0);
         setMpInit(false);
 
-        await new Promise(r => setTimeout(r, 150)); // let React mount video element
+        await new Promise(r => setTimeout(r, 150));
 
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -202,13 +201,11 @@ export default function App() {
             vid.srcObject = stream;
             await vid.play();
 
-            // wait for first real frame
             await new Promise(res => {
                 const check = () => (vid.readyState >= 3 && vid.videoWidth > 0) ? res() : setTimeout(check, 40);
                 check();
             });
 
-            // init FaceMesh (no .initialize() — lazy)
             const fm = new window.FaceMesh({
                 locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`,
             });
@@ -220,7 +217,6 @@ export default function App() {
             });
             fmRef.current = fm;
 
-            // rAF loop — ONLY draws overlay, never touches FaceMesh
             const paintLoop = () => {
                 if (!aliveRef.current) return;
                 drawOverlay();
@@ -228,8 +224,6 @@ export default function App() {
             };
             rafRef.current = requestAnimationFrame(paintLoop);
 
-            // FaceMesh runs on a SEPARATE interval (every 200ms = 5fps)
-            // Completely decoupled from the paint loop
             fmTimerRef.current = setInterval(async () => {
                 if (!aliveRef.current || !fmRef.current) return;
                 const vid2 = videoRef.current;
@@ -284,6 +278,7 @@ export default function App() {
                 const fd = new FormData(); fd.append("image", blob, "baseline.jpg");
                 try {
                     const r = await fetch(`${API}/baseline`, { method: "POST", body: fd });
+                    if (!r.ok) throw new Error(`Server error: ${r.status}`);
                     const d = await r.json();
                     if (d.error) throw new Error(d.error);
                     setBaselineScores(d.scores); setStep("test");
@@ -297,6 +292,7 @@ export default function App() {
                 const fd = new FormData(); fd.append("image", blob, "test.jpg");
                 try {
                     const r = await fetch(`${API}/analyze`, { method: "POST", body: fd });
+                    if (!r.ok) throw new Error(`Server error: ${r.status}`);
                     const d = await r.json();
                     if (d.error) throw new Error(d.error);
                     setResult(d); setStep("result");
