@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
-const API = "http://localhost:5000/api";
+const API_URL = "https://your-node-service.railway.app";
 const OVAL = { cx: 0.5, cy: 0.48, rx: 0.22, ry: 0.35 };
 
 function inOval(x, y) {

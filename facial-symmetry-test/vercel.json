@@ -1,8 +1,23 @@
 {
-  "functions": {
-    "api/*.py": {
-      "runtime": "python3.12"
+  "version": 2,
+  "builds": [
+    {
+      "src": "client/package.json",
+      "use": "@vercel/static-build",
+      "config": { "distDir": "dist" }
+    },
+    {
+      "src": "server/index.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "cv_engine/*.py",
+      "use": "@vercel/python"
     }
-  },
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index.py" }]
+  ],
+  "routes": [
+    { "src": "/api/python/(.*)", "dest": "cv_engine/analyze.py" },
+    { "src": "/api/(.*)", "dest": "server/index.js" },
+    { "src": "/(.*)", "dest": "client/dist/$1" }
+  ]
 }
