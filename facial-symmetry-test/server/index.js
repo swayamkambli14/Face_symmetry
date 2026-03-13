@@ -11,7 +11,6 @@ const PORT = process.env.PORT || 5000;
 const CV_ENGINE_URL = process.env.CV_ENGINE_URL || "http://localhost:8000";
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
 
-// ✅ CORS now uses CLIENT_URL env var
 app.use(cors({
   origin: [CLIENT_URL, "http://localhost:5173"],
   methods: ["GET", "POST", "DELETE", "OPTIONS"],
@@ -22,7 +21,6 @@ app.use(express.json());
 
 // ── Storage ──────────────────────────────────────────────────────────────────
 const UPLOADS_DIR = path.join(__dirname, "uploads");
-
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -43,14 +41,18 @@ const upload = multer({
   },
 });
 
-// ── CV Engine HTTP Client ──────────────────────────────────────────────────────
-async function callCVEngine(imagePath, mode, fingerprintPath = null) {
+// ── In-memory fingerprint (no filesystem dependency) ─────────────────────────
+let fingerprintData = null;
+let baselineScores = null;
+
+// ── CV Engine HTTP Client ─────────────────────────────────────────────────────
+async function callCVEngine(imagePath, mode, fpData = null) {
   const formData = new FormData();
   formData.append("mode", mode);
   formData.append("image", fs.createReadStream(imagePath));
 
-  if (fingerprintPath && fs.existsSync(fingerprintPath)) {
-    formData.append("fingerprint", fs.createReadStream(fingerprintPath));
+  if (mode === "analyze" && fpData) {
+    formData.append("fingerprint_data", fpData);
   }
 
   const response = await fetch(`${CV_ENGINE_URL}/analyze`, {
@@ -59,31 +61,33 @@ async function callCVEngine(imagePath, mode, fingerprintPath = null) {
     headers: formData.getHeaders(),
   });
 
+  const text = await response.text();
+
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`CV Engine error: ${response.status} - ${errorText}`);
+    throw new Error(`CV Engine error ${response.status}: ${text}`);
   }
 
-  return await response.json();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(`CV engine returned non-JSON: ${text}`);
+  }
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-// POST /api/baseline — upload normal photo, extract fingerprint
+// POST /api/baseline
 app.post("/api/baseline", upload.single("image"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No image uploaded" });
 
-  const imagePath = req.file.path;
-  const fingerprintPath = path.join(UPLOADS_DIR, "fingerprint.json");
-
   try {
-    const result = await callCVEngine(imagePath, "baseline");
+    const result = await callCVEngine(req.file.path, "baseline");
 
-    if (result.error) {
-      return res.status(422).json({ error: result.error });
-    }
+    if (result.error) return res.status(422).json({ error: result.error });
 
-    fs.writeFileSync(fingerprintPath, JSON.stringify(result, null, 2));
+    // Store fingerprint in memory instead of filesystem
+    fingerprintData = result.fingerprint_data || null;
+    baselineScores = result.scores || null;
 
     res.json({
       success: true,
@@ -97,24 +101,18 @@ app.post("/api/baseline", upload.single("image"), async (req, res) => {
   }
 });
 
-// POST /api/analyze — capture test photo, compare vs baseline
+// POST /api/analyze
 app.post("/api/analyze", upload.single("image"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No image uploaded" });
 
-  const fingerprintPath = path.join(UPLOADS_DIR, "fingerprint.json");
-
-  if (!fs.existsSync(fingerprintPath)) {
+  if (!fingerprintData) {
     return res.status(400).json({ error: "No baseline found. Upload baseline photo first." });
   }
 
-  const testImagePath = req.file.path;
-
   try {
-    const result = await callCVEngine(testImagePath, "analyze", fingerprintPath);
+    const result = await callCVEngine(req.file.path, "analyze", fingerprintData);
 
-    if (result.error) {
-      return res.status(422).json({ error: result.error });
-    }
+    if (result.error) return res.status(422).json({ error: result.error });
 
     res.json(result);
   } catch (err) {
@@ -123,26 +121,23 @@ app.post("/api/analyze", upload.single("image"), async (req, res) => {
   }
 });
 
-// GET /api/status — check if baseline exists
+// GET /api/status
 app.get("/api/status", (req, res) => {
-  const fingerprintPath = path.join(UPLOADS_DIR, "fingerprint.json");
-  const hasBaseline = fs.existsSync(fingerprintPath);
-  let baselineScores = null;
-  if (hasBaseline) {
-    try {
-      const fp = JSON.parse(fs.readFileSync(fingerprintPath, "utf8"));
-      const raw = fp.scores || {};
-      baselineScores = Object.fromEntries(
-        Object.entries(raw).filter(([k, v]) => typeof v === "number")
-      );
-    } catch (e) { }
-  }
-  res.json({ hasBaseline, baselineScores });
+  res.json({
+    hasBaseline: !!fingerprintData,
+    baselineScores: baselineScores
+      ? Object.fromEntries(
+          Object.entries(baselineScores).filter(([k, v]) => typeof v === "number")
+        )
+      : null,
+  });
 });
 
-// DELETE /api/reset — clear all uploads for fresh test
+// DELETE /api/reset
 app.delete("/api/reset", (req, res) => {
   try {
+    fingerprintData = null;
+    baselineScores = null;
     const files = fs.readdirSync(UPLOADS_DIR);
     files.forEach((f) => fs.unlinkSync(path.join(UPLOADS_DIR, f)));
     res.json({ success: true, message: "Reset complete" });
@@ -152,8 +147,7 @@ app.delete("/api/reset", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\n🚀 Facial Symmetry API running on http://localhost:${PORT}`);
-  console.log(`   CV Engine URL: ${CV_ENGINE_URL}`);
-  console.log(`   Client URL: ${CLIENT_URL}`);
-  console.log(`   Uploads: ${UPLOADS_DIR}\n`);
+  console.log(`\n Server running on http://localhost:${PORT}`);
+  console.log(`   CV Engine: ${CV_ENGINE_URL}`);
+  console.log(`   Client:    ${CLIENT_URL}\n`);
 });
