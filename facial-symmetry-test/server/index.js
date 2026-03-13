@@ -11,10 +11,12 @@ const PORT = process.env.PORT || 5000;
 const CV_ENGINE_URL = process.env.CV_ENGINE_URL || "http://localhost:8000";
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
 
+// ✅ CORS now uses CLIENT_URL env var
 app.use(cors({
-  origin: ["https://faceclient-production.up.railway.app", "http://localhost:5173"],
+  origin: [CLIENT_URL, "http://localhost:5173"],
   methods: ["GET", "POST", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type"]
+  allowedHeaders: ["Content-Type"],
+  credentials: true
 }));
 app.use(express.json());
 
@@ -33,7 +35,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
     if (allowed.includes(file.mimetype)) cb(null, true);
@@ -81,7 +83,6 @@ app.post("/api/baseline", upload.single("image"), async (req, res) => {
       return res.status(422).json({ error: result.error });
     }
 
-    // Save fingerprint locally
     fs.writeFileSync(fingerprintPath, JSON.stringify(result, null, 2));
 
     res.json({
