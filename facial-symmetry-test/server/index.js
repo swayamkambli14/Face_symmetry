@@ -11,7 +11,11 @@ const PORT = process.env.PORT || 5000;
 const CV_ENGINE_URL = process.env.CV_ENGINE_URL || "http://localhost:8000";
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
 
-app.use(cors({ origin: CLIENT_URL }));
+app.use(cors({
+  origin: ["https://faceclient-production.up.railway.app", "http://localhost:5173"],
+  methods: ["GET", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type"]
+}));
 app.use(express.json());
 
 // ── Storage ──────────────────────────────────────────────────────────────────
