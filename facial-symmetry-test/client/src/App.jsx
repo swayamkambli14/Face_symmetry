@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:5000") + "/api";
-const OVAL = { cx: 0.5, cy: 0.48, rx: 0.22, ry: 0.35 };
+const OVAL = { cx: 0.5, cy: 0.48, rx: 0.28, ry: 0.42 };
 
 function inOval(x, y) {
     return ((x - OVAL.cx) / OVAL.rx) ** 2 + ((y - OVAL.cy) / OVAL.ry) ** 2 <= 1;
@@ -100,9 +100,14 @@ export default function App() {
             src: "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js",
             crossOrigin: "anonymous",
             onload: () => setMpReady(true),
-            onerror: () => setErr("Failed to load MediaPipe — check connection"),
+            onerror: () => setErr("Failed to load face detector — try Chrome browser"),
         });
         document.head.appendChild(sc);
+        setTimeout(() => {
+            if (!window.FaceMesh) {
+                setErr("Face detector took too long — please use Chrome on Android or Safari 16+ on iOS");
+            }
+        }, 10000);
         return () => { try { document.head.removeChild(sc); } catch (_) { } };
     }, []);
 
@@ -128,6 +133,22 @@ export default function App() {
         ctx.strokeStyle = ready ? "#00ff88" : "rgba(255,255,255,0.8)";
         ctx.lineWidth = 3;
         ctx.setLineDash([10, 6]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Vertical midline
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - ry);
+        ctx.lineTo(cx, cy + ry);
+        ctx.strokeStyle = ready ? "rgba(0,255,136,0.3)" : "rgba(255,255,255,0.2)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+
+        // Horizontal midline
+        ctx.beginPath();
+        ctx.moveTo(cx - rx, cy);
+        ctx.lineTo(cx + rx, cy);
         ctx.stroke();
         ctx.setLineDash([]);
 
@@ -170,7 +191,7 @@ export default function App() {
                 if (fw > 30 && fh > 30) {
                     const avg = d => { let s = 0, n = 0; for (let i = 0; i < d.length; i += 4) { s += (d[i] + d[i + 1] + d[i + 2]) / 3; n++; } return n ? s / n : 128; };
                     const r = avg(tc.getImageData(x0, y0, fw / 2, fh).data) / avg(tc.getImageData(x0 + fw / 2, y0, fw / 2, fh).data);
-                    light = r >= 0.7 && r <= 1.3;
+                    light = r >= 0.5 && r <= 1.8;
                 }
             }
         } catch (_) { light = true; }
